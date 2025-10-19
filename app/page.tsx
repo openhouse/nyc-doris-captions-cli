@@ -1,10 +1,23 @@
 import Link from 'next/link';
-import { getRecentItems } from '../lib/queries';
+import DatabaseErrorNotice from '../components/database-error-notice';
+import { isDatabaseUnavailableError, type DatabaseUnavailableError } from '../lib/db';
+import { getRecentItems, type ItemRecord } from '../lib/queries';
 import { MediaBadge } from '../components/media-badge';
 import { formatItemDate } from '../lib/format';
 
 export default async function HomePage() {
-  const items = await getRecentItems();
+  let items: ItemRecord[] = [];
+  let dbError: DatabaseUnavailableError | null = null;
+
+  try {
+    items = await getRecentItems();
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      dbError = error;
+    } else {
+      throw error;
+    }
+  }
 
   return (
     <div className="space-y-10">
@@ -31,28 +44,32 @@ export default async function HomePage() {
             Browse all items
           </Link>
         </header>
-        <div className="grid gap-6 md:grid-cols-2">
-          {items.map((item) => (
-            <article
-              key={item.id}
-              className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4 shadow-sm focus-within:ring-2 focus-within:ring-brand-accent"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <MediaBadge mediaType={item.mediaType} />
-                <p className="text-xs uppercase tracking-wide text-slate-500">{item.collection ?? 'Unfiled'}</p>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-brand">
-                  <Link href={`/items/${item.id}`} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent">
-                    {item.title}
-                  </Link>
-                </h3>
-                <p className="text-sm text-slate-500">{formatItemDate(item.date)}</p>
-              </div>
-              {item.description ? <p className="text-sm text-slate-600 line-clamp-3">{item.description}</p> : null}
-            </article>
-          ))}
-        </div>
+        {dbError ? (
+          <DatabaseErrorNotice error={dbError} />
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2">
+            {items.map((item) => (
+              <article
+                key={item.id}
+                className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4 shadow-sm focus-within:ring-2 focus-within:ring-brand-accent"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <MediaBadge mediaType={item.mediaType} />
+                  <p className="text-xs uppercase tracking-wide text-slate-500">{item.collection ?? 'Unfiled'}</p>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-brand">
+                    <Link href={`/items/${item.id}`} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent">
+                      {item.title}
+                    </Link>
+                  </h3>
+                  <p className="text-sm text-slate-500">{formatItemDate(item.date)}</p>
+                </div>
+                {item.description ? <p className="text-sm text-slate-600 line-clamp-3">{item.description}</p> : null}
+              </article>
+            ))}
+          </div>
+        )}
       </section>
       <section className="rounded-lg border border-slate-200 bg-slate-50 p-6">
         <h2 className="text-xl font-semibold text-brand">How we handle rights & advisories</h2>

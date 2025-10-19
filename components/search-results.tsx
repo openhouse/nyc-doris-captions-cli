@@ -1,6 +1,8 @@
 import Link from 'next/link';
+import DatabaseErrorNotice from './database-error-notice';
+import { isDatabaseUnavailableError, type DatabaseUnavailableError } from '../lib/db';
 import { formatItemDate, truncate } from '../lib/format';
-import { getCollections, searchItems } from '../lib/queries';
+import { getCollections, searchItems, type SearchResult } from '../lib/queries';
 import { MediaBadge } from './media-badge';
 import SearchFilters from './search-filters';
 
@@ -8,14 +10,36 @@ interface SearchResultsProps {
   searchParams: Record<string, string | string[] | undefined>;
 }
 
+type Collections = ReturnType<typeof getCollections>;
+
 export default async function SearchResults({ searchParams }: SearchResultsProps) {
   const query = typeof searchParams.q === 'string' ? searchParams.q : undefined;
   const mediaType = typeof searchParams.mediaType === 'string' ? searchParams.mediaType : undefined;
   const collection = typeof searchParams.collection === 'string' ? searchParams.collection : undefined;
   const sort = typeof searchParams.sort === 'string' ? (searchParams.sort as 'relevance' | 'date') : 'relevance';
 
-  const { results, total } = await searchItems({ query, mediaType, collection, sort });
-  const collections = getCollections();
+  let searchResponse: { results: SearchResult[]; total: number } = { results: [], total: 0 };
+  let collections: Collections = [];
+  let dbError: DatabaseUnavailableError | null = null;
+
+  try {
+    [searchResponse, collections] = await Promise.all([
+      searchItems({ query, mediaType, collection, sort }),
+      Promise.resolve().then(() => getCollections())
+    ]);
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      dbError = error;
+    } else {
+      throw error;
+    }
+  }
+
+  if (dbError) {
+    return <DatabaseErrorNotice error={dbError} />;
+  }
+
+  const { results, total } = searchResponse;
 
   return (
     <div className="space-y-4">
