@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import matter from 'gray-matter';
 import Database from 'better-sqlite3';
-import pdfParse from 'pdf-parse';
+import pdfParse from '../lib/pdfParseWrapper';
 import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 
