@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "candle-cli"
+version = "0.1.0"
+description = "Local-first CLI for captions and transcripts for NYC DORIS collections"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  {name = "NYC DORIS Community"}
+]
+dependencies = [
+  "typer[all]",
+  "pydantic>=2.5",
+  "rich>=13.7",
+  "requests>=2.32",
+  "python-slugify>=8.0",
+  "tqdm>=4.66",
+  "srt>=3.5",
+  "webvtt-py>=0.5",
+  "jinja2>=3.1",
+  "bagit>=1.8",
+  "sqlalchemy>=2.0",
+  "aiosqlite>=0.20",
+  "uvicorn>=0.30",
+  "fastapi>=0.111",
+  "python-multipart>=0.0.9"
+]
+
+[project.optional-dependencies]
+transcribe = [
+  "faster-whisper>=1.0.0",
+  "whisper-timestamped @ git+https://github.com/linto-ai/whisper-timestamped.git"
+]
+ui = [
+  "datasette>=0.64"
+]
+
+[project.scripts]
+candle = "candle_cli.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"candle_cli" = ["templates/*.j2"]

@@ -1,0 +1,1 @@
+recursive-include src/candle_cli/templates *.j2
