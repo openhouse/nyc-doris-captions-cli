@@ -26,6 +26,16 @@ export default function ItemPage({ params }: ItemPageProps) {
         <p className="text-sm text-slate-600">{formatItemDate(item.date)}</p>
       </header>
 
+      {item.sourceUrl && !item.localPath ? (
+        <a
+          href={item.sourceUrl}
+          className="inline-flex w-fit items-center justify-center rounded bg-brand-accent px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-brand-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
+          aria-label="View this item on NYC Municipal Archives (opens external site)"
+        >
+          View on NYC Municipal Archives
+        </a>
+      ) : null}
+
       {Boolean(item.advisory) ? (
         <div className="rounded border border-amber-500 bg-amber-50 p-3 text-sm text-amber-900" role="note">
           Content advisory: this item may include outdated, offensive, or harmful language. Review the context before
@@ -44,10 +54,17 @@ export default function ItemPage({ params }: ItemPageProps) {
             <dt className="font-medium text-slate-900">Collection / series</dt>
             <dd>{item.collection ?? 'Unfiled'} {item.series ? `→ ${item.series}` : ''}</dd>
           </div>
-          <div>
-            <dt className="font-medium text-slate-900">Repository path</dt>
-            <dd className="font-mono">{item.localPath}</dd>
-          </div>
+          {item.localPath ? (
+            <div>
+              <dt className="font-medium text-slate-900">Repository path</dt>
+              <dd className="font-mono">{item.localPath}</dd>
+            </div>
+          ) : (
+            <div>
+              <dt className="font-medium text-slate-900">Storage</dt>
+              <dd>Remote item (metadata only)</dd>
+            </div>
+          )}
           {item.citation ? (
             <div>
               <dt className="font-medium text-slate-900">Suggested citation</dt>
@@ -95,6 +112,30 @@ export default function ItemPage({ params }: ItemPageProps) {
 }
 
 function Preview({ item }: { item: ReturnType<typeof getItemById> extends infer T ? (T extends undefined ? never : T) : never }) {
+  if (!item.localPath) {
+    return (
+      <section className="space-y-3" aria-labelledby="preview">
+        <h2 id="preview" className="text-lg font-semibold text-brand">
+          Metadata preview
+        </h2>
+        <p className="text-sm text-slate-700">
+          We do not host this media locally. Use the “View on NYC Municipal Archives” button to access the original item.
+        </p>
+        {item.description ? (
+          <p className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">{item.description}</p>
+        ) : null}
+        {item.transcriptText ? (
+          <div className="space-y-2">
+            <h3 className="text-md font-semibold text-brand">Transcript</h3>
+            <p className="whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+              {item.transcriptText.slice(0, 4000)}
+            </p>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
   switch (item.mediaType) {
     case 'text':
       return (
@@ -118,9 +159,13 @@ function Preview({ item }: { item: ReturnType<typeof getItemById> extends infer 
             title="PDF preview"
             className="h-[600px] w-full rounded border border-slate-200"
           />
-          <a className="text-sm" href={`/api/download?path=${encodeURIComponent(item.localPath)}`}>
-            Download original PDF
-          </a>
+          <p className="text-sm text-slate-600">
+            If the preview does not load,{' '}
+            <a className="font-medium underline" href={`/api/download?path=${encodeURIComponent(item.localPath)}`}>
+              download the original PDF
+            </a>
+            .
+          </p>
         </section>
       );
     case 'image':
