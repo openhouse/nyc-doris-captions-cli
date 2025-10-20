@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
 import path from 'node:path';
 import { cache } from 'react';
 
@@ -28,6 +29,8 @@ export function isDatabaseUnavailableError(error: unknown): error is DatabaseUna
 
 function createDatabase() {
   try {
+    const dir = path.dirname(DB_PATH);
+    fs.mkdirSync(dir, { recursive: true });
     const db = new Database(DB_PATH, { readonly: true, fileMustExist: false });
     db.pragma('journal_mode = WAL');
     return db;

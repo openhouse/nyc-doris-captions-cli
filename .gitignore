@@ -1,0 +1,15 @@
+# Generated artefacts
+node_modules/
+data/
+.cache/
+coverage/
+
+# Local environment configuration
+.env
+.env.local
+
+# Harvest outputs
+data/harvest/
+
+# Logs
+*.log

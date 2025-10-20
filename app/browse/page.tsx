@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import DatabaseErrorNotice from '../../components/database-error-notice';
 import { isDatabaseUnavailableError, type DatabaseUnavailableError } from '../../lib/db';
-import { getRecentItems, type ItemRecord } from '../../lib/queries';
+import { getRecentItems, getItemCount, type ItemRecord } from '../../lib/queries';
 import { MediaBadge } from '../../components/media-badge';
 import { formatItemDate, truncate } from '../../lib/format';
 
@@ -13,8 +13,9 @@ export default async function BrowsePage() {
   let items: ItemRecord[] = [];
   let dbError: DatabaseUnavailableError | null = null;
 
+  let totalItems = 0;
   try {
-    items = await getRecentItems(50);
+    [items, totalItems] = await Promise.all([getRecentItems(50), Promise.resolve().then(() => getItemCount())]);
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {
       dbError = error;
@@ -30,6 +31,14 @@ export default async function BrowsePage() {
       </p>
       {dbError ? (
         <DatabaseErrorNotice error={dbError} />
+      ) : totalItems === 0 ? (
+        <div
+          className="rounded border border-slate-300 bg-slate-50 p-4 text-sm text-slate-700"
+          role="status"
+          aria-live="polite"
+        >
+          No items yet—run <code>pnpm harvest:preservica …</code> then <code>pnpm ingest …</code> to load the catalogue.
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {items.map((item) => (

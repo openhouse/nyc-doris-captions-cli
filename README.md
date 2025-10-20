@@ -1,93 +1,137 @@
 # NYC Collections Browser
 
-An offline-first research tool that ingests the local `2025-10-18/` corpus, normalises metadata into SQLite with FTS5,
-then serves an accessible Next.js 14 interface for browsing, searching, and reviewing NYC DORIS archival materials.
+An offline-first research tool that ingests local or harvested records, normalises metadata into SQLite with FTS5, and serves an accessible Next.js interface for browsing NYC DORIS materials. We store metadata, transcripts, OCR, and provenance—never the remote media files themselves.
 
-## Prerequisites
-
-- Node.js 18+
-- pnpm 8+
-- SQLite with FTS5 support (bundled with modern SQLite)
-
-## Quick start
+## TL;DR – harvest → ingest → browse
 
 ```bash
 pnpm install
-pnpm ingest
+pnpm approve-builds better-sqlite3
+pnpm harvest:preservica --seeds seeds/nycma-sample.txt --out data/harvest/preservica.jsonl
+pnpm ingest --from-jsonl data/harvest/preservica.jsonl
 pnpm dev
 ```
 
-The ingest step writes `data/collections.db` and `data/items.jsonl`. The development server uses that SQLite database for
-all pages.
+Open http://localhost:3000 and you should see “Recently added” populated, search working, and item pages linking back to the NYC Municipal Archives for remote assets.
 
-## Available scripts
+## What this app does
 
-- `pnpm ingest` — walk `2025-10-18/`, extract metadata and text, create thumbnails, and build the SQLite + JSONL dataset.
-- `pnpm dev` — start the Next.js dev server.
-- `pnpm build` / `pnpm start` — production build and start.
-- `pnpm test` — run Vitest unit tests for the ingest pipeline.
-- `pnpm test:e2e` — Playwright smoke tests (stubbed, add credentials as needed).
-- `pnpm tsx scripts/fetch-preservica.ts --config preservica.config.json` — harvest Preservica metadata into Markdown stubs
-  under `2025-10-18/preservica/`.
+- **Harvest (HTML)** – a polite scraper for Preservica item URLs that respects `robots.txt`, caches HTML responses, throttles requests, captures thumbnails/durations when available, and normalises metadata (title, description, creators, subjects, collection, rights, advisory hints). Output lands in JSONL with deterministic IDs (SHA-256 of the canonical URL).
+- **Ingest** – merges harvested JSONL and local source files into `data/collections.db` (SQLite + FTS5) and `data/items.jsonl`. JSONL lines are validated with Zod so malformed records fail fast with a helpful line number + field message.
+- **Browse** – a Next.js 14 UI that reads the SQLite database server-side. Remote-only items show a prominent “View on NYC Municipal Archives” button; empty catalogues emit actionable guidance instead of 500s.
 
-## Preservica metadata adapter
+## One-time setup
 
-The `scripts/fetch-preservica.ts` CLI creates front-matter stubs that mirror the ingest folder layout. Configure the adapter
-with a JSON file (see `preservica.config.example.json`) and optional YAML seed list (`seed.example.yml`).
+```bash
+nvm use        # repo ships .nvmrc (Node 20)
+pnpm install
+pnpm approve-builds better-sqlite3
+pnpm install   # re-run once the build is approved
+```
 
-1. Copy the sample files:
+The scripts will create `data/`, `data/harvest/`, `.cache/preservica/`, and `public/thumbnails/` as needed, but you can pre-create them if you prefer.
 
-   ```bash
-   cp preservica.config.example.json preservica.config.json
-   cp seed.example.yml seed.yml
-   ```
+## Hello world (always works)
 
-2. Edit `preservica.config.json`:
+If you just want to boot the UI with an empty catalogue:
 
-   - `mode`: `api`, `seed`, or `placeholder`.
-   - `clientId` / `clientSecret`: required only for `api` mode.
-   - `seedPath`: path to `seed.yml` entries used by `seed` and `placeholder` modes.
-   - `requestsPerSecond`: polite throttle for API/HTML requests.
+```bash
+pnpm ingest   # creates data/collections.db with zero rows
+pnpm dev
+```
 
-3. Populate `seed.yml` with the Preservica URLs or placeholder records you want to ingest.
+Browse/Search will show “No items yet—run `pnpm harvest:preservica …` then `pnpm ingest …`” rather than erroring.
 
-4. Run the harvester:
+## Harvest Preservica metadata (HTML)
 
-   ```bash
-   pnpm tsx scripts/fetch-preservica.ts --config preservica.config.json
-   ```
+```bash
+pnpm harvest:preservica \
+  --seeds seeds/nycma-sample.txt \
+  --out data/harvest/preservica.jsonl \
+  --concurrency 2 \
+  --delay-ms 750 \
+  --max 10
+```
 
-5. Run the existing ingest step to refresh SQLite/JSONL outputs:
+Highlights:
 
-   ```bash
-   pnpm ingest
-   ```
+- Checks `/robots.txt` and exits early if the requested path is disallowed.
+- Uses a descriptive user agent (`nyc-doris-captions-cli/0.2 (+mailto:archives-tech@records.nyc.gov)`).
+- Caches HTML in `.cache/preservica/` (filename = SHA-256 of the URL) to avoid re-fetching during development.
+- Normalises common field labels (`Creator`, `Contributors`, `Type of Resource`, `Duration`, etc.) into consistent fields.
+- Extracts thumbnails from `og:image`/JSON-LD, parses duration hints (`HH:MM:SS`, ISO 8601, “3 minutes 20 seconds”), and logs each result as `{ status, title, url }`.
+- Deterministic IDs: `sha256(canonicalUrl)` (first 32 hex chars stored in `id`).
 
-Seed mode fetches live HTML (respecting the configured rate limit); placeholder mode writes static records for offline demos.
-API mode scaffolds requests for Preservica's Content API when credentials are available.
+Useful flags:
 
-## Testing
+- `--seeds <file>` – newline-delimited Preservica item URLs (sample file lives in `seeds/`).
+- `--out <file>` – JSONL destination (default `data/harvest/preservica.jsonl`).
+- `--concurrency <n>` – concurrent page fetches (default `2`).
+- `--delay-ms <ms>` – minimum spacing between requests (default `750`).
+- `--max <n>` – process only the first `n` seeds (handy for smoke tests).
+- `--help` – print full usage info.
 
-Vitest tests exercise the ingest script against fixtures in `tests/fixtures/`. They verify metadata heuristics, adjacent
-transcript detection, and the end-to-end database build.
+The JSONL output is safe to commit locally but is ignored by git via `.gitignore`.
+
+## Ingest data into SQLite
+
+```bash
+pnpm ingest --root 2025-10-18 --from-jsonl data/harvest/preservica.jsonl
+```
+
+Behaviour:
+
+- Creates `data/collections.db` (SQLite + WAL) and `data/items.jsonl` snapshots.
+- Merges local files (Markdown, text, PDF, images, audio, video) with harvested JSONL.
+- Generates thumbnails for local images via `sharp` and stores them in `public/thumbnails/`.
+- Validates JSONL records with Zod; failures report the offending line and field before any database work occurs.
+- Drops + recreates tables today, but an `upsertItems(db, items)` helper exists for future partial updates.
+
+CLI / environment knobs:
+
+- `--root <dir>` or `COLLECTIONS_ROOT` (default `2025-10-18/`).
+- `--from-jsonl <file>` to merge harvested items.
+- `COLLECTIONS_DB_PATH` (default `data/collections.db`).
+- `--help` prints usage.
+
+## Generated artefacts
+
+- `data/collections.db` – SQLite database consumed by the UI.
+- `data/items.jsonl` – snapshot of every ingested record.
+- `data/harvest/*.jsonl` – harvested metadata (ignored by git).
+- `.cache/preservica/` – cached HTML responses from the harvester.
+- `public/thumbnails/` – generated thumbnails for local images.
+
+## Troubleshooting
+
+| Issue | Fix |
+| --- | --- |
+| `Ignored build scripts: better-sqlite3` during install | Run `pnpm approve-builds better-sqlite3` followed by `pnpm install`. |
+| `The better-sqlite3 native bindings could not be loaded` | Approve/reinstall as above, then re-run `pnpm ingest` to create the DB. |
+| `No items yet` banner in the UI | Confirm `data/collections.db` exists. Run `pnpm harvest:preservica …` then `pnpm ingest --from-jsonl …`, or run `pnpm ingest` alone for an empty catalogue. |
+| Ingest fails with “Invalid record at line …” | The JSONL did not match the schema. Fix the referenced line/field and rerun ingest. |
+
+To inspect counts manually:
+
+```bash
+sqlite3 data/collections.db "select count(*) from items;"
+```
 
 ## Architecture overview
 
-- **Ingest (`scripts/ingest.ts`)** parses Markdown, plain text, PDFs, and AV metadata, computing SHA-256 checksums and
-  writing FTS5-backed SQLite tables plus JSONL snapshots.
-- **Data access (`lib/*.ts`)** provides typed helpers for fetching recent items, executing searches, and resolving
-  collection metadata.
-- **UI (`app/`)** is a Next.js App Router site using server components for data fetching, accessible forms, skip links,
-  ARIA live regions, and advisory banners.
+- **Types** – `types/item.ts` defines the shared `ItemRecord`/`MediaType` contract used by ingest and UI queries.
+- **Harvester** – `scripts/harvest-preservica.ts` handles robots checks, caching, metadata normalisation, thumbnail/duration extraction, and emits JSONL.
+- **Ingest** – `scripts/ingest.ts` validates JSONL with Zod, walks local corpora, generates checksums/thumbnails, writes SQLite + JSONL snapshots, and exposes an `upsertItems` helper for future incremental updates.
+- **Data access** – `lib/db.ts` and `lib/queries.ts` wrap `better-sqlite3`, auto-create the database directory, gracefully handle missing tables, and hydrate JSON columns (creators/subjects) into arrays.
+- **UI** – `app/` uses Next.js App Router server components. Search results announce counts via ARIA live regions, remote items render external-link buttons with descriptive labels, and PDF previews include direct download fallbacks.
 
-## Definition of done checkpoints
+## Scripts at a glance
 
-- FY23–24 ARB PDF renders inline with download link when present in the corpus.
-- Lunch & Learn transcript, Spreaker episode, and other transcripts surface as text/audio with provenance.
-- Search leverages SQLite FTS5 with highlight snippets, filters, and sort order.
-- Report form posts to `/api/report` and logs payloads server-side for triage.
-- README includes these instructions and guidance for future iterators.
+- `pnpm harvest:preservica --help` – HTML harvester CLI help.
+- `pnpm ingest --help` – ingest CLI help/flags.
+- `pnpm dev` – Next.js dev server.
+- `pnpm build` / `pnpm start` – production build & serve.
+- `pnpm test` – Vitest unit tests.
+- `pnpm test:e2e` – Playwright smoke tests (stubbed).
 
-## Screenshots
-
-Add screenshots after running the app locally once ingestion populates real data.
+Future work (see backlog): capture additional metadata (e.g., remote thumbnails, durations), hook up transcription once policy permits, and expand diagnostics.
