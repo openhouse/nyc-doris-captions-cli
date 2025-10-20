@@ -1,0 +1,9 @@
+{
+  "baseUrl": "https://nycrecords.access.preservica.com",
+  "mode": "placeholder",
+  "query": "type:(audio OR video) AND visibility:public",
+  "maxItems": 5,
+  "requestsPerSecond": 1,
+  "userAgent": "nyc-doris-captions-cli (contact@example.org)",
+  "seedPath": "seed.yml"
+}

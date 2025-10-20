@@ -1,0 +1,13 @@
+items:
+  - id: "IO_EXAMPLE_1"
+    url: "https://nycrecords.access.preservica.com/IO_EXAMPLE_1"
+    title: "Sample Oral History"
+    collection: "Example Collection"
+    series: "Series A"
+    mediaType: "audio"
+    rights: "© NYC Municipal Archives"
+    citation: "NYC Municipal Archives, Sample Oral History"
+    creators:
+      - "Doe, Jane"
+    subjects: "Immigration;New York City"
+    description: "A short placeholder description for testing."
