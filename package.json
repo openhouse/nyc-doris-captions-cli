@@ -16,13 +16,15 @@
   },
   "dependencies": {
     "better-sqlite3": "^9.1.0",
+    "cheerio": "^1.1.2",
     "date-fns": "^3.6.0",
     "gray-matter": "^4.0.3",
     "next": "^14.2.4",
     "pdf-parse": "^1.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "sharp": "^0.33.3"
+    "sharp": "^0.33.3",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.44.1",
