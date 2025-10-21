@@ -19,6 +19,7 @@ interface CliOptions {
   concurrency: number;
   delayMs: number;
   max: number | null;
+  only: 'video' | 'audio' | null;
   helpRequested: boolean;
 }
 
@@ -35,6 +36,7 @@ interface HarvestRecord {
   sourceUrl: string;
   localPath: null;
   mediaType: 'text' | 'pdf' | 'image' | 'audio' | 'video';
+  mediaUrl: string | null;
   durationSec: number | null;
   thumbnail: string | null;
   transcriptText: null;
@@ -58,12 +60,16 @@ const FIELD_SYNONYMS = {
   duration: ['duration', 'runtime', 'running time', 'time duration', 'extent', 'digital duration']
 } as const;
 
+const VIDEO_EXTENSION_PATTERN = /\.(?:m3u8|mp4|m4v|mov|webm|ogv|ts)(?:\?|$)/i;
+const AUDIO_EXTENSION_PATTERN = /\.(?:mp3|m4a|wav|aac|flac|oga|ogg|opus)(?:\?|$)/i;
+
 function parseArgs(argv: string[]): CliOptions {
   let seedsPath: string | null = null;
   let outputPath: string | null = null;
   let concurrency = 2;
   let delayMs = 750;
   let max: number | null = null;
+  let only: 'video' | 'audio' | null = null;
   let helpRequested = false;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -93,6 +99,14 @@ function parseArgs(argv: string[]): CliOptions {
           throw new Error('max must be a positive number');
         }
         break;
+      case '--only': {
+        const value = requireValue(argv, ++i, '--only').toLowerCase();
+        if (value !== 'video' && value !== 'audio') {
+          throw new Error('--only flag accepts "video" or "audio"');
+        }
+        only = value;
+        break;
+      }
       case '--help':
       case '-h':
         helpRequested = true;
@@ -108,6 +122,7 @@ function parseArgs(argv: string[]): CliOptions {
     concurrency,
     delayMs,
     max,
+    only,
     helpRequested
   };
 }
@@ -133,6 +148,7 @@ Options:
   --concurrency <n>    Number of pages to process concurrently (default: 2)
   --delay-ms <n>       Minimum delay between requests in milliseconds (default: 750)
   --max <n>            Optional limit on number of seeds processed
+  --only <type>        Filter results to a media type (video or audio)
   -h, --help           Show this message
 `);
 }
@@ -172,8 +188,24 @@ export async function main() {
       try {
         const html = await fetchWithCache(seed, options.delayMs);
         const record = extractRecord(html, seed);
+        if (options.only && record.mediaType !== options.only) {
+          recordsByIndex[index] = null;
+          console.log({
+            status: 'skipped',
+            reason: 'filtered',
+            mediaType: record.mediaType,
+            url: record.sourceUrl
+          });
+          return;
+        }
         recordsByIndex[index] = record;
-        console.log({ status: 'ok', title: record.title, url: record.sourceUrl });
+        console.log({
+          status: 'ok',
+          title: record.title,
+          url: record.sourceUrl,
+          mediaType: record.mediaType,
+          mediaUrl: record.mediaUrl ?? undefined
+        });
       } catch (error) {
         console.error({
           status: 'error',
@@ -377,8 +409,9 @@ export function extractRecord(html: string, sourceUrl: URL): HarvestRecord {
   const collection = pickField(fieldMap, FIELD_SYNONYMS.collection);
   const series = pickField(fieldMap, FIELD_SYNONYMS.series);
   const rights = pickField(fieldMap, FIELD_SYNONYMS.rights);
-  const mediaHints = mergeLists(structured.mediaTypeHints, pickAll(fieldMap, FIELD_SYNONYMS.format));
-  const mediaType = determineMediaType(mediaHints ?? [], structured.mediaTypeHints, $);
+  const mediaSignals = collectMediaSignals($, sourceUrl, fieldMap, structured.mediaUrls);
+  const mediaHints = mergeLists(structured.mediaTypeHints, pickAll(fieldMap, FIELD_SYNONYMS.format), mediaSignals.typeHints);
+  const mediaType = determineMediaType(mediaHints ?? [], $, mediaSignals);
   const durationSec =
     structured.durationSec ??
     parseDurationToSeconds(pickField(fieldMap, FIELD_SYNONYMS.duration)) ??
@@ -386,6 +419,7 @@ export function extractRecord(html: string, sourceUrl: URL): HarvestRecord {
     null;
   const thumbnail = pickThumbnail($, sourceUrl, structured.thumbnail);
   const advisory = detectAdvisory([description, rights]);
+  const mediaUrl = pickMediaUrl(mediaSignals.mediaUrls, mediaType);
 
   const record: HarvestRecord = {
     id: hashString(canonical).slice(0, 32),
@@ -400,6 +434,7 @@ export function extractRecord(html: string, sourceUrl: URL): HarvestRecord {
     sourceUrl: canonical,
     localPath: null,
     mediaType,
+    mediaUrl,
     durationSec,
     thumbnail,
     transcriptText: null,
@@ -442,6 +477,7 @@ interface JsonLdHints {
   thumbnail: string | null;
   durationSec: number | null;
   mediaTypeHints: string[];
+  mediaUrls: string[];
 }
 
 function extractJsonLd($: CheerioAPI, base: URL): JsonLdHints {
@@ -467,6 +503,7 @@ function extractJsonLd($: CheerioAPI, base: URL): JsonLdHints {
   let thumbnail: string | null = null;
   let durationSec: number | null = null;
   const mediaTypeHints: string[] = [];
+  const mediaUrls: string[] = [];
 
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') continue;
@@ -528,6 +565,25 @@ function extractJsonLd($: CheerioAPI, base: URL): JsonLdHints {
         }
       }
     }
+
+    const possibleMediaUrls = [data.contentUrl, data.embedUrl, data.url, data.playerType];
+    for (const candidate of possibleMediaUrls) {
+      if (typeof candidate === 'string') {
+        const resolved = normaliseMaybeUrl(candidate, base);
+        if (resolved) {
+          mediaUrls.push(resolved);
+        }
+      } else if (Array.isArray(candidate)) {
+        for (const entry of candidate) {
+          if (typeof entry === 'string') {
+            const resolved = normaliseMaybeUrl(entry, base);
+            if (resolved) {
+              mediaUrls.push(resolved);
+            }
+          }
+        }
+      }
+    }
   }
 
   return {
@@ -538,7 +594,8 @@ function extractJsonLd($: CheerioAPI, base: URL): JsonLdHints {
     subjects,
     thumbnail,
     durationSec,
-    mediaTypeHints: Array.from(new Set(mediaTypeHints.map((value) => value.toString())))
+    mediaTypeHints: Array.from(new Set(mediaTypeHints.map((value) => value.toString()))),
+    mediaUrls: Array.from(new Set(mediaUrls))
   };
 }
 
@@ -604,8 +661,138 @@ function mergeLists(...lists: Array<string[] | null | undefined>): string[] | nu
   return seen.size ? Array.from(seen) : null;
 }
 
-function determineMediaType(values: string[], hints: string[], $: CheerioAPI): HarvestRecord['mediaType'] {
-  const candidates = [...values, ...hints];
+interface MediaSignals {
+  typeHints: string[];
+  mediaUrls: string[];
+}
+
+function collectMediaSignals(
+  $: CheerioAPI,
+  base: URL,
+  fieldMap: Map<string, string[]>,
+  initialUrls: string[] | null
+): MediaSignals {
+  const typeHints: string[] = [];
+  const urlSet = new Set<string>();
+
+  const addUrl = (candidate: string | null | undefined) => {
+    if (!candidate) return;
+    const resolved = normaliseMaybeUrl(candidate, base);
+    if (resolved) {
+      urlSet.add(resolved);
+    }
+  };
+
+  if (initialUrls) {
+    for (const url of initialUrls) {
+      addUrl(url);
+    }
+  }
+
+  const addTypeHint = (hint: string | null | undefined) => {
+    if (!hint) return;
+    const trimmed = hint.toString().trim();
+    if (!trimmed) return;
+    typeHints.push(trimmed);
+  };
+
+  const metaUrlSelectors = [
+    'meta[property="og:video"]',
+    'meta[property="og:video:url"]',
+    'meta[property="og:video:secure_url"]',
+    'meta[property="og:video:stream"]',
+    'meta[property="og:audio"]',
+    'meta[property="og:audio:url"]',
+    'meta[property="og:audio:secure_url"]',
+    'meta[name="twitter:player:stream"]',
+    'meta[name="twitter:player:stream:src"]'
+  ];
+  for (const selector of metaUrlSelectors) {
+    addUrl($(selector).attr('content'));
+  }
+
+  const metaTypeSelectors = [
+    'meta[property="og:video:type"]',
+    'meta[property="og:audio:type"]',
+    'meta[name="twitter:player:stream:content_type"]'
+  ];
+  for (const selector of metaTypeSelectors) {
+    addTypeHint($(selector).attr('content'));
+  }
+
+  $('video').each((_, element) => {
+    addTypeHint('video');
+    const el = $(element);
+    addUrl(el.attr('src'));
+    el.find('source').each((__, source) => {
+      const sourceEl = $(source);
+      addUrl(sourceEl.attr('src'));
+      addTypeHint(sourceEl.attr('type'));
+    });
+  });
+
+  $('audio').each((_, element) => {
+    addTypeHint('audio');
+    const el = $(element);
+    addUrl(el.attr('src'));
+    el.find('source').each((__, source) => {
+      const sourceEl = $(source);
+      addUrl(sourceEl.attr('src'));
+      addTypeHint(sourceEl.attr('type'));
+    });
+  });
+
+  $('source').each((_, element) => {
+    const el = $(element);
+    addUrl(el.attr('src'));
+    addTypeHint(el.attr('type'));
+  });
+
+  $('link[rel="alternate"]').each((_, element) => {
+    const el = $(element);
+    addUrl(el.attr('href'));
+    addTypeHint(el.attr('type'));
+  });
+
+  $('iframe').each((_, element) => {
+    const src = $(element).attr('src');
+    addUrl(src);
+    if (src && /player|embed|viewer/i.test(src)) {
+      addTypeHint('video');
+    }
+  });
+
+  const definitionKeywords = ['type', 'format', 'moving image', 'video', 'sound', 'audio'];
+  for (const [key, values] of fieldMap.entries()) {
+    const lowerKey = key.toLowerCase();
+    if (definitionKeywords.some((keyword) => lowerKey.includes(keyword))) {
+      addTypeHint(lowerKey);
+      for (const value of values) {
+        addTypeHint(value);
+      }
+    }
+  }
+
+  const html = $.html();
+  const urlPattern = /https?:\/\/[^"'<>\s]+?(?:m3u8|mp4|m4v|mov|webm|ogv|ts|mp3|m4a|wav|aac|flac|oga|ogg|opus)(?:\?[^"'<>\s]*)?/gi;
+  let match: RegExpExecArray | null;
+  while ((match = urlPattern.exec(html))) {
+    addUrl(match[0]);
+    if (/m3u8|mp4|m4v|mov|webm|ogv|ts/i.test(match[0])) {
+      addTypeHint('video');
+    } else if (/mp3|m4a|wav|aac|flac|oga|ogg|opus/i.test(match[0])) {
+      addTypeHint('audio');
+    }
+  }
+
+  return {
+    typeHints: Array.from(new Set(typeHints)),
+    mediaUrls: Array.from(urlSet)
+  };
+}
+
+function determineMediaType(values: string[], $: CheerioAPI, signals: MediaSignals): HarvestRecord['mediaType'] {
+  const candidates = [...values, ...signals.typeHints];
   const metaValues = [
     $('meta[property="og:type"]').attr('content'),
     $('meta[name="twitter:card"]').attr('content'),
@@ -616,13 +803,21 @@ function determineMediaType(values: string[], hints: string[], $: CheerioAPI): H
   for (const meta of metaValues) {
     if (meta) candidates.push(meta);
   }
-  const normalised = candidates
+  const normalised = [...candidates, ...metaValues]
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     .map((value) => value.toLowerCase());
-  if (normalised.some((value) => value.includes('video') || value.includes('moving image') || value.includes('videoobject'))) {
+  const hasVideoUrl = signals.mediaUrls.some((url) => VIDEO_EXTENSION_PATTERN.test(url) || url.toLowerCase().includes('.m3u8'));
+  const hasAudioUrl = signals.mediaUrls.some((url) => AUDIO_EXTENSION_PATTERN.test(url));
+  if (
+    hasVideoUrl ||
+    normalised.some((value) => value.includes('video') || value.includes('moving image') || value.includes('videoobject'))
+  ) {
     return 'video';
   }
-  if (normalised.some((value) => value.includes('audio') || value.includes('sound') || value.includes('podcast') || value.includes('audioobject'))) {
+  if (
+    hasAudioUrl ||
+    normalised.some((value) => value.includes('audio') || value.includes('sound') || value.includes('podcast') || value.includes('audioobject'))
+  ) {
     return 'audio';
   }
   if (normalised.some((value) => value.includes('pdf') || value.includes('application/pdf'))) {
@@ -634,14 +829,35 @@ function determineMediaType(values: string[], hints: string[], $: CheerioAPI): H
   if (normalised.some((value) => value.includes('text') || value.includes('document') || value.includes('manuscript'))) {
     return 'text';
   }
-  if ($('video').length > 0) return 'video';
-  if ($('audio').length > 0) return 'audio';
+  if ($('video').length > 0 || signals.typeHints.some((value) => value.toLowerCase().includes('video'))) return 'video';
+  if ($('audio').length > 0 || signals.typeHints.some((value) => value.toLowerCase().includes('audio'))) return 'audio';
   return 'text';
 }
 
 function detectAdvisory(fields: Array<string | null>) {
   const combined = fields.filter(Boolean).join(' ').toLowerCase();
   return /sensitive|harmful|offensive|explicit|warning/.test(combined) ? 1 : 0;
+}
+
+function pickMediaUrl(candidates: string[], mediaType: HarvestRecord['mediaType']) {
+  if (!candidates.length) return null;
+  const unique = Array.from(new Set(candidates));
+  const videoUrls = unique.filter(isVideoUrl);
+  const audioUrls = unique.filter(isAudioUrl);
+  if (mediaType === 'video' && videoUrls.length) return videoUrls[0];
+  if (mediaType === 'audio' && audioUrls.length) return audioUrls[0];
+  if (videoUrls.length) return videoUrls[0];
+  if (audioUrls.length) return audioUrls[0];
+  return unique[0];
+}
+
+function isVideoUrl(url: string) {
+  const lower = url.toLowerCase();
+  return VIDEO_EXTENSION_PATTERN.test(lower) || lower.includes('.m3u8');
+}
+
+function isAudioUrl(url: string) {
+  return AUDIO_EXTENSION_PATTERN.test(url.toLowerCase());
 }
 
 function parseNameList(value: unknown): string[] {

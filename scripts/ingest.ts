@@ -19,7 +19,7 @@ const THUMB_DIR = path.join(process.cwd(), 'public', 'thumbnails');
 
 interface CliOptions {
   root: string | null;
-  fromJsonl: string | null;
+  fromJsonl: string[];
   helpRequested: boolean;
 }
 
@@ -74,6 +74,9 @@ const JsonlRecordSchema = z.object({
   ocrText: z.string().optional().nullable(),
   rights: z.string().optional().nullable(),
   citation: z.string().optional().nullable(),
+  captionsVttPath: z.string().trim().optional().nullable(),
+  captionsSrtPath: z.string().trim().optional().nullable(),
+  mediaUrl: z.string().trim().optional().nullable(),
   checksumSha256: z
     .string()
     .regex(/^[a-f0-9]{64}$/i, 'checksumSha256 must be a 64 character hex string')
@@ -98,7 +101,7 @@ function resolvePath(candidate: string) {
 
 function parseArgs(argv: string[]): CliOptions {
   let root: string | null = null;
-  let fromJsonl: string | null = null;
+  const fromJsonl: string[] = [];
   let helpRequested = false;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -115,7 +118,7 @@ function parseArgs(argv: string[]): CliOptions {
       if (!value) {
         throw new Error('--from-jsonl flag requires a file path');
       }
-      fromJsonl = value;
+      fromJsonl.push(value);
       i += 1;
     } else if (arg === '--help' || arg === '-h') {
       helpRequested = true;
@@ -132,7 +135,7 @@ function printHelp() {
 
 Options:
   --root <dir>        Directory containing local collection files (default: ${DEFAULT_ROOT})
-  --from-jsonl <file> Load additional items from a harvested JSONL file
+  --from-jsonl <file> Load additional items from a harvested JSONL file (repeatable)
   -h, --help          Show this message
 `);
 }
@@ -154,7 +157,7 @@ export async function main() {
   }
 
   const rootPath = options.root ? resolvePath(options.root) : resolvePath(DEFAULT_ROOT);
-  const jsonlPath = options.fromJsonl ? resolvePath(options.fromJsonl) : null;
+  const jsonlPaths = options.fromJsonl.map((entry) => resolvePath(entry));
 
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   fs.mkdirSync(THUMB_DIR, { recursive: true });
@@ -162,12 +165,14 @@ export async function main() {
 
   const items = new Map<string, ItemRecord>();
 
-  if (jsonlPath) {
-    const remoteItems = await loadItemsFromJsonl(jsonlPath);
-    for (const item of remoteItems) {
-      items.set(item.id, item);
+  if (jsonlPaths.length) {
+    for (const jsonlPath of jsonlPaths) {
+      const remoteItems = await loadItemsFromJsonl(jsonlPath);
+      for (const item of remoteItems) {
+        items.set(item.id, item);
+      }
+      console.log(`Loaded ${remoteItems.length} record${remoteItems.length === 1 ? '' : 's'} from ${jsonlPath}`);
     }
-    console.log(`Loaded ${remoteItems.length} record${remoteItems.length === 1 ? '' : 's'} from ${jsonlPath}`);
   }
 
   if (rootPath && fs.existsSync(rootPath)) {
@@ -228,6 +233,8 @@ async function buildItemFromFile(fullPath: string): Promise<ItemRecord | null> {
       thumbnail,
       transcriptText,
       ocrText,
+      captionsVttPath: null,
+      captionsSrtPath: null,
       rights,
       citation,
       checksumSha256: sha,
@@ -261,6 +268,8 @@ async function buildItemFromFile(fullPath: string): Promise<ItemRecord | null> {
       thumbnail,
       transcriptText,
       ocrText,
+      captionsVttPath: null,
+      captionsSrtPath: null,
       rights,
       citation,
       checksumSha256: sha,
@@ -289,6 +298,8 @@ async function buildItemFromFile(fullPath: string): Promise<ItemRecord | null> {
       thumbnail,
       transcriptText,
       ocrText,
+      captionsVttPath: null,
+      captionsSrtPath: null,
       rights,
       citation,
       checksumSha256: sha,
@@ -316,6 +327,8 @@ async function buildItemFromFile(fullPath: string): Promise<ItemRecord | null> {
       thumbnail,
       transcriptText,
       ocrText,
+      captionsVttPath: null,
+      captionsSrtPath: null,
       rights,
       citation,
       checksumSha256: sha,
@@ -343,6 +356,8 @@ async function buildItemFromFile(fullPath: string): Promise<ItemRecord | null> {
       thumbnail,
       transcriptText,
       ocrText,
+      captionsVttPath: null,
+      captionsSrtPath: null,
       rights,
       citation,
       checksumSha256: sha,
@@ -445,6 +460,8 @@ export async function loadItemsFromJsonl(filePath: string): Promise<ItemRecord[]
     const citation = raw.citation && raw.citation.trim().length ? raw.citation : null;
     const transcriptText = raw.transcriptText ?? null;
     const ocrText = raw.ocrText ?? null;
+    const captionsVttPath = raw.captionsVttPath && raw.captionsVttPath.trim().length ? raw.captionsVttPath : null;
+    const captionsSrtPath = raw.captionsSrtPath && raw.captionsSrtPath.trim().length ? raw.captionsSrtPath : null;
     const durationSec = raw.durationSec ?? null;
     const addedAt = raw.addedAt ?? new Date().toISOString();
     const checksum = raw.checksumSha256 ?? (sourceUrl ? hashString(sourceUrl) : hashString(raw.id));
@@ -465,6 +482,8 @@ export async function loadItemsFromJsonl(filePath: string): Promise<ItemRecord[]
       thumbnail,
       transcriptText,
       ocrText,
+      captionsVttPath,
+      captionsSrtPath,
       rights,
       citation,
       checksumSha256: checksum,
@@ -497,6 +516,8 @@ function writeDatabase(items: ItemRecord[]) {
     media_type TEXT NOT NULL,
     duration_sec REAL,
     thumbnail TEXT,
+    captions_vtt_path TEXT,
+    captions_srt_path TEXT,
     transcript_text TEXT,
     ocr_text TEXT,
     rights TEXT,
@@ -516,10 +537,11 @@ function writeDatabase(items: ItemRecord[]) {
 
   const insert = db.prepare(`INSERT INTO items (
       id, title, description, date, creators, subjects, collection, series, source_url, local_path, media_type,
-      duration_sec, thumbnail, transcript_text, ocr_text, rights, citation, checksum_sha256, added_at, advisory
+      duration_sec, thumbnail, captions_vtt_path, captions_srt_path, transcript_text, ocr_text, rights, citation,
+      checksum_sha256, added_at, advisory
     ) VALUES (@id, @title, @description, @date, json(@creators), json(@subjects), @collection, @series, @sourceUrl,
-      @localPath, @mediaType, @durationSec, @thumbnail, @transcriptText, @ocrText, @rights, @citation,
-      @checksumSha256, @addedAt, @advisory)`);
+      @localPath, @mediaType, @durationSec, @thumbnail, @captionsVttPath, @captionsSrtPath, @transcriptText, @ocrText,
+      @rights, @citation, @checksumSha256, @addedAt, @advisory)`);
 
   const ftsInsert = db.prepare(`INSERT INTO items_fts(rowid, title, description, transcript_text, ocr_text, subjects, creators)
     VALUES ((SELECT rowid FROM items WHERE id = @id), @title, @description, @transcriptText, @ocrText, json(@subjects), json(@creators));`);
@@ -551,10 +573,11 @@ function writeDatabase(items: ItemRecord[]) {
 export function upsertItems(db: BetterSqliteDatabase, items: ItemRecord[]) {
   const upsert = db.prepare(`INSERT INTO items (
       id, title, description, date, creators, subjects, collection, series, source_url, local_path, media_type,
-      duration_sec, thumbnail, transcript_text, ocr_text, rights, citation, checksum_sha256, added_at, advisory
+      duration_sec, thumbnail, captions_vtt_path, captions_srt_path, transcript_text, ocr_text, rights, citation,
+      checksum_sha256, added_at, advisory
     ) VALUES (@id, @title, @description, @date, json(@creators), json(@subjects), @collection, @series, @sourceUrl,
-      @localPath, @mediaType, @durationSec, @thumbnail, @transcriptText, @ocrText, @rights, @citation,
-      @checksumSha256, @addedAt, @advisory)
+      @localPath, @mediaType, @durationSec, @thumbnail, @captionsVttPath, @captionsSrtPath, @transcriptText, @ocrText,
+      @rights, @citation, @checksumSha256, @addedAt, @advisory)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       description = excluded.description,
@@ -568,6 +591,8 @@ export function upsertItems(db: BetterSqliteDatabase, items: ItemRecord[]) {
       media_type = excluded.media_type,
       duration_sec = excluded.duration_sec,
       thumbnail = excluded.thumbnail,
+      captions_vtt_path = excluded.captions_vtt_path,
+      captions_srt_path = excluded.captions_srt_path,
       transcript_text = excluded.transcript_text,
       ocr_text = excluded.ocr_text,
       rights = excluded.rights,

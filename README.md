@@ -8,7 +8,8 @@ An offline-first research tool that ingests local or harvested records, normalis
 pnpm install
 pnpm approve-builds better-sqlite3
 pnpm harvest:preservica --seeds seeds/nycma-sample.txt --out data/harvest/preservica.jsonl
-pnpm ingest --from-jsonl data/harvest/preservica.jsonl
+pnpm transcribe:remote --source data/harvest/preservica.jsonl --filter video --max 2 --concurrency 1
+pnpm ingest --from-jsonl data/harvest/preservica+asr.jsonl
 pnpm dev
 ```
 
@@ -17,7 +18,8 @@ Open http://localhost:3000 and you should see “Recently added” populated, se
 ## What this app does
 
 - **Harvest (HTML)** – a polite scraper for Preservica item URLs that respects `robots.txt`, caches HTML responses, throttles requests, captures thumbnails/durations when available, and normalises metadata (title, description, creators, subjects, collection, rights, advisory hints). Output lands in JSONL with deterministic IDs (SHA-256 of the canonical URL).
-- **Ingest** – merges harvested JSONL and local source files into `data/collections.db` (SQLite + FTS5) and `data/items.jsonl`. JSONL lines are validated with Zod so malformed records fail fast with a helpful line number + field message.
+- **Ingest** – merges harvested JSONL (now supporting multiple `--from-jsonl` flags) and local source files into `data/collections.db` (SQLite + FTS5) and `data/items.jsonl`. JSONL lines are validated with Zod so malformed records fail fast with a helpful line number + field message.
+- **Transcribe** – `pnpm transcribe:remote` streams remote Preservica audio/video through `ffmpeg`, runs Whisper (via `whisper.cpp`) to generate WebVTT/SRT captions plus plain-text transcripts, and writes updated JSONL alongside reusable caption files.
 - **Browse** – a Next.js 14 UI that reads the SQLite database server-side. Remote-only items show a prominent “View on NYC Municipal Archives” button; empty catalogues emit actionable guidance instead of 500s.
 
 ## One-time setup
@@ -73,17 +75,39 @@ Useful flags:
 
 The JSONL output is safe to commit locally but is ignored by git via `.gitignore`.
 
+## Transcribe remote media (Whisper + ffmpeg)
+
+```bash
+pnpm transcribe:remote \
+  --source data/harvest/preservica.jsonl \
+  --filter video \
+  --max 2 \
+  --headers "Referer: https://nycrecords.access.preservica.com" \
+  --concurrency 1
+```
+
+What happens:
+
+- Streams audio only via `ffmpeg` (no media is retained on disk beyond a temporary WAV).
+- Runs `whisper.cpp` using the configured model, emitting `data/captions/<id>.vtt` + `.srt` and updating the JSONL with `transcriptText`, `captionsVttPath`, and `captionsSrtPath`.
+- Caches discovery HTML under `.cache/preservica/` so repeated runs avoid refetching pages.
+- Maintains a resumable status log at `data/asr-status.json` so previously completed items are skipped automatically.
+- Writes an enriched JSONL beside the source (default `<source>+asr.jsonl`, override with `--out`).
+
+> Tip: set `WHISPER_CPP_BIN`/`WHISPER_MODEL` env vars or pass `--whisper-bin`/`--model` explicitly. A default user agent is supplied; add the Preservica referer header via `--headers` when required.
+
 ## Ingest data into SQLite
 
 ```bash
-pnpm ingest --root 2025-10-18 --from-jsonl data/harvest/preservica.jsonl
+pnpm ingest --root 2025-10-18 --from-jsonl data/harvest/preservica.jsonl --from-jsonl data/harvest/preservica+asr.jsonl
 ```
 
 Behaviour:
 
 - Creates `data/collections.db` (SQLite + WAL) and `data/items.jsonl` snapshots.
-- Merges local files (Markdown, text, PDF, images, audio, video) with harvested JSONL.
+- Merges local files (Markdown, text, PDF, images, audio, video) with harvested/enriched JSONL (last write wins by `id`).
 - Generates thumbnails for local images via `sharp` and stores them in `public/thumbnails/`.
+- Stores caption download paths (`captionsVttPath`, `captionsSrtPath`) and transcript text when provided by the JSONL.
 - Validates JSONL records with Zod; failures report the offending line and field before any database work occurs.
 - Drops + recreates tables today, but an `upsertItems(db, items)` helper exists for future partial updates.
 
@@ -128,6 +152,7 @@ sqlite3 data/collections.db "select count(*) from items;"
 ## Scripts at a glance
 
 - `pnpm harvest:preservica --help` – HTML harvester CLI help.
+- `pnpm transcribe:remote --help` – remote transcription CLI help.
 - `pnpm ingest --help` – ingest CLI help/flags.
 - `pnpm dev` – Next.js dev server.
 - `pnpm build` / `pnpm start` – production build & serve.

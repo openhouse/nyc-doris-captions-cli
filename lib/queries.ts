@@ -16,6 +16,7 @@ export async function getRecentItems(limit = 6): Promise<ItemRecord[]> {
   const stmt = db.prepare(
     `SELECT id, title, description, date, collection, series, media_type as mediaType, source_url as sourceUrl,
             local_path as localPath, rights, citation, transcript_text as transcriptText, ocr_text as ocrText,
+            captions_vtt_path as captionsVttPath, captions_srt_path as captionsSrtPath,
             duration_sec as durationSec, thumbnail, checksum_sha256 as checksumSha256, added_at as addedAt,
             advisory, creators, subjects
        FROM items
@@ -119,6 +120,7 @@ export function getItemById(id: string): ItemRecord | undefined {
     .prepare(
       `SELECT id, title, description, date, collection, series, media_type as mediaType, source_url as sourceUrl,
               local_path as localPath, rights, citation, transcript_text as transcriptText, ocr_text as ocrText,
+              captions_vtt_path as captionsVttPath, captions_srt_path as captionsSrtPath,
               duration_sec as durationSec, thumbnail, checksum_sha256 as checksumSha256, added_at as addedAt,
               advisory, creators, subjects
          FROM items WHERE id = ?`
@@ -159,6 +161,8 @@ function hydrateItemRow(row: Record<string, unknown>): ItemRecord {
     citation: toNullableString(row.citation),
     transcriptText: toNullableString(row.transcriptText),
     ocrText: toNullableString(row.ocrText),
+    captionsVttPath: toNullableString(row.captionsVttPath),
+    captionsSrtPath: toNullableString(row.captionsSrtPath),
     durationSec: typeof row.durationSec === 'number' ? row.durationSec : row.durationSec === null ? null : Number(row.durationSec) || null,
     thumbnail: toNullableString(row.thumbnail),
     checksumSha256: String(row.checksumSha256 ?? ''),

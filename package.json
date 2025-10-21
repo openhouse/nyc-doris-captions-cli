@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "harvest:preservica": "tsx scripts/harvest-preservica.ts"
+    "harvest:preservica": "tsx scripts/harvest-preservica.ts",
+    "transcribe:remote": "tsx scripts/transcribe-remote.ts"
   },
   "dependencies": {
     "better-sqlite3": "^9.1.0",
