@@ -16,6 +16,8 @@ export interface ItemRecord {
   thumbnail: string | null;
   transcriptText: string | null;
   ocrText: string | null;
+  captionsVttPath: string | null;
+  captionsSrtPath: string | null;
   rights: string | null;
   citation: string | null;
   checksumSha256: string;

@@ -124,13 +124,38 @@ function Preview({ item }: { item: ReturnType<typeof getItemById> extends infer 
         {item.description ? (
           <p className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">{item.description}</p>
         ) : null}
-        {item.transcriptText ? (
+        {item.captionsVttPath ? (
           <div className="space-y-2">
-            <h3 className="text-md font-semibold text-brand">Transcript</h3>
-            <p className="whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
-              {item.transcriptText.slice(0, 4000)}
-            </p>
+            <video
+              controls
+              className="w-full rounded border border-slate-200 bg-black"
+              preload="metadata"
+              poster={item.thumbnail ?? undefined}
+            >
+              <track kind="captions" src={`/${item.captionsVttPath}`} srcLang="en" label="English" default />
+              <p className="p-2 text-sm text-white">Playback is available on the NYC Municipal Archives site.</p>
+            </video>
+            <p className="text-xs text-slate-600">Automated captions and transcript. Review recommended.</p>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <a className="font-medium text-brand underline" href={`/${item.captionsVttPath}`}>
+                Download captions (.vtt)
+              </a>
+              {item.captionsSrtPath ? (
+                <a className="font-medium text-brand underline" href={`/${item.captionsSrtPath}`}>
+                  Download captions (.srt)
+                </a>
+              ) : null}
+            </div>
           </div>
+        ) : null}
+        {item.transcriptText ? (
+          <details className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+            <summary className="cursor-pointer text-sm font-semibold text-brand">Read transcript</summary>
+            <div className="mt-2 whitespace-pre-wrap text-slate-800">
+              {item.transcriptText.slice(0, 4000)}
+              {item.transcriptText.length > 4000 ? '…' : ''}
+            </div>
+          </details>
         ) : null}
       </section>
     );
@@ -192,16 +217,34 @@ function Preview({ item }: { item: ReturnType<typeof getItemById> extends infer 
             {item.mediaType === 'audio' ? (
               <audio controls src={`/media/${item.localPath}`} className="w-full" />
             ) : (
-              <video controls src={`/media/${item.localPath}`} className="w-full" />
+              <video controls className="w-full">
+                <source src={`/media/${item.localPath}`} />
+                {item.captionsVttPath ? (
+                  <track kind="captions" src={`/${item.captionsVttPath}`} srcLang="en" label="English" default />
+                ) : null}
+              </video>
             )}
           </media-controller>
-          {item.transcriptText ? (
-            <div className="space-y-2">
-              <h3 className="text-md font-semibold text-brand">Transcript</h3>
-              <p className="whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
-                {item.transcriptText.slice(0, 4000)}
-              </p>
+          {item.captionsVttPath ? (
+            <div className="flex flex-wrap gap-4 text-sm">
+              <a className="font-medium text-brand underline" href={`/${item.captionsVttPath}`}>
+                Download captions (.vtt)
+              </a>
+              {item.captionsSrtPath ? (
+                <a className="font-medium text-brand underline" href={`/${item.captionsSrtPath}`}>
+                  Download captions (.srt)
+                </a>
+              ) : null}
             </div>
+          ) : null}
+          {item.transcriptText ? (
+            <details className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+              <summary className="cursor-pointer text-sm font-semibold text-brand">Read transcript</summary>
+              <div className="mt-2 whitespace-pre-wrap text-slate-800">
+                {item.transcriptText.slice(0, 4000)}
+                {item.transcriptText.length > 4000 ? '…' : ''}
+              </div>
+            </details>
           ) : null}
         </section>
       );
